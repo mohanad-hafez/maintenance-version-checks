@@ -1,0 +1,73 @@
+name: Version maintenance
+on:
+  push:
+    branches: [replacement-version-maintenance-01]
+    paths: [.github/version-maintenance-ready]
+permissions:
+  contents: read
+concurrency:
+  group: version-maintenance
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository == 'mohanad-hafez/maintenance-version-checks'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s .github/version-maintenance -p test_version_maintenance.py -v
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dotnet/maintenance-packages
+          ref: e5aa18b677b7553d8972b71afdff9665f745746e
+          path: native-source
+          persist-credentials: false
+      - name: Update version properties
+        working-directory: native-source
+        run: python3 ../.github/version-maintenance/version_maintenance.py
+      - name: Build and pack
+        working-directory: native-source
+        run: ./build.sh -pack
+      - name: Check exact change scope
+        working-directory: native-source
+        run: |
+          python3 - <<'PY'
+          import json,subprocess
+          r=json.load(open('version-update-result.json'))
+          assert set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()) == {x['path'] for x in r['changes']}
+          PY
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const fs=require('fs');
+            const result=JSON.parse(fs.readFileSync('native-source/version-update-result.json','utf8'));
+            if(result.status!=='changes')throw Error('Expected inspected source changes');
+            if(result.changes.length>30)throw Error('Unexpected scope');
+            const repository=context.repo;const base='version-maintenance-base-01';
+            const b=await github.rest.repos.getBranch({...repository,branch:base});
+            if(b.data.commit.sha!=='8b7595daed2c2f63438355b5d9b906f9e3bc0b21')throw Error('Base changed');
+            const entries=[];
+            for(const x of result.changes){
+             if(!x.path.startsWith('src/')||x.path.split('/').includes('tests')||!['.csproj','.ilproj','.props'].some(e=>x.path.endsWith(e)))throw Error('Unexpected path');
+             entries.push({path:x.path,mode:'100644',type:'blob',content:x.content});
+            }
+            const t=await github.rest.git.createTree({...repository,base_tree:'78868f8e65bf5951c2f40cb39c3494f1fcebe440',tree:entries});
+            const c=await github.rest.git.createCommit({...repository,message:'Update package version properties',tree:t.data.sha,parents:['8b7595daed2c2f63438355b5d9b906f9e3bc0b21']});
+            const head='version-maintenance-result-01';
+            await github.rest.git.createRef({...repository,ref:'refs/heads/'+head,sha:c.data.sha});
+            const pr=await github.rest.pulls.create({...repository,base,head,title:'Update package version properties',body:'Applies the version property rules and verifies the package build.'});
+            fs.writeFileSync('publication.json',JSON.stringify({pr:pr.data.number,url:pr.data.html_url,commit:c.data.sha,base:'8b7595daed2c2f63438355b5d9b906f9e3bc0b21',files:entries.map(x=>x.path)},null,2));
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: version-maintenance-result
+          path: |
+            native-source/version-input-capture.json
+            native-source/version-update-result.json
+            publication.json
+          retention-days: 14

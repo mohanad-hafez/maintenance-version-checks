@@ -29,10 +29,11 @@ elif sys.argv[1] == "after":
     (evidence / "feed-reads.json").write_text(json.dumps(reads),encoding="utf-8")
 elif sys.argv[1] == "build":
     packages = sorted(path.name for path in Path("artifacts").rglob("*.nupkg"))
-    assert packages, "No NuGet package was produced"
+    binaries = sorted(path.name for path in Path("artifacts/bin").rglob("*.dll"))
+    assert binaries, "No build binaries were produced"
     resolved = {}
     for path in Path(".").rglob("project.assets.json"):
         data = json.loads(path.read_bytes())
         resolved[str(path)] = sorted(data.get("libraries",{}))
     assert resolved, "No build dependency resolution evidence"
-    (evidence / "build.json").write_text(json.dumps({"packages":packages,"resolved":resolved}),encoding="utf-8")
+    (evidence / "build.json").write_text(json.dumps({"packages":packages,"binaries":binaries,"resolved":resolved}),encoding="utf-8")

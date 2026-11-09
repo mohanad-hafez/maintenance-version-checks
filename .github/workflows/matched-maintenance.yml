@@ -1,7 +1,7 @@
 name: Matched package maintenance
 on:
   push:
-    branches: [matched-version-maintenance-01]
+    branches: [matched-version-maintenance-02]
 permissions:
   contents: read
 jobs:
